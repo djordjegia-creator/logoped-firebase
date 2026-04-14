@@ -1,4 +1,4 @@
-const CACHE = 'logoped-firebase-v3';
+const CACHE = 'logoped-firebase-v5';
 const ASSETS = ['/', '/index.html'];
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(CACHE).then(c => c.addAll(ASSETS)));
