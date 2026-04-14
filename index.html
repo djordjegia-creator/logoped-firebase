@@ -635,14 +635,11 @@ async function posaljiEmailPotvrdu(z) {
   // Konfiguracija: https://www.emailjs.com
   // VAŽNO: Zamenite EMAILJS_SERVICE_ID, EMAILJS_TEMPLATE_ID, EMAILJS_PUBLIC_KEY
   // sa vašim podacima nakon registracije na emailjs.com
-  const EMAILJS_SERVICE  = 'YOUR_SERVICE_ID';   // <- zameniti
-  const EMAILJS_TEMPLATE = 'YOUR_TEMPLATE_ID';  // <- zameniti
-  const EMAILJS_KEY      = 'YOUR_PUBLIC_KEY';   // <- zameniti
+  const EMAILJS_SERVICE  = 'service_rpkuy3i';   // <- zameniti
+  const EMAILJS_TEMPLATE = 'template_njdl02f';  // <- zameniti
+  const EMAILJS_KEY      = 'bBGl2ISjP2JGaAK7K';   // <- zameniti
 
-  if (EMAILJS_SERVICE === 'YOUR_SERVICE_ID') {
-    console.log('EmailJS nije konfigurisan — email nije poslat');
-    return; // Ne blokira potvrdu
-  }
+  // EmailJS konfigurisan
 
   try {
     await fetch('https://api.emailjs.com/api/v1.0/email/send', {
