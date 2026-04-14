@@ -292,6 +292,40 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
 
 /* ── LOADING ──────────────────────────────────────────────────── */
 .loading{display:flex;flex-direction:column;align-items:center;justify-content:center;height:200px;gap:14px;}
+/* ── ZAHTEVI ──────────────────────────────────────────────────── */
+.zah-card{
+  background:var(--surface);border:1px solid var(--border);
+  border-radius:var(--radius);margin-bottom:10px;overflow:hidden;
+  border-left:3px solid var(--warn);
+}
+.zah-card.potvrdjeno{border-left-color:var(--ok);}
+.zah-card.odbijeno{border-left-color:var(--err);}
+.zah-top{padding:14px 15px 10px;display:flex;flex-direction:column;gap:6px;}
+.zah-ime{font-weight:700;font-size:15px;color:var(--text);}
+.zah-meta{display:flex;gap:6px;flex-wrap:wrap;}
+.zah-row{display:flex;gap:6px;align-items:center;font-size:13px;color:var(--text2);}
+.zah-nota{font-size:12px;color:var(--muted);font-style:italic;padding:0 15px 10px;}
+.zah-actions{display:flex;border-top:1px solid var(--border);}
+.zah-btn{
+  flex:1;padding:10px 4px;font-size:12px;font-weight:700;
+  background:none;border:none;border-right:1px solid var(--border);
+  cursor:pointer;font-family:'Sora',sans-serif;
+  display:flex;align-items:center;justify-content:center;gap:4px;
+  transition:background .1s;
+}
+.zah-btn:last-child{border-right:none;}
+.zah-btn:active{background:var(--surface2);}
+.zah-btn-ok{color:var(--ok);}
+.zah-btn-err{color:var(--err);}
+.zah-btn-call{color:var(--info);}
+.zah-ts{font-size:10px;color:var(--muted);margin-top:2px;}
+.zah-empty{text-align:center;padding:50px 20px;color:var(--muted);}
+.zah-potv-info{
+  background:var(--okbg);border:1px solid var(--ok);
+  border-radius:8px;padding:8px 12px;font-size:12px;color:var(--ok);
+  margin:0 15px 10px;
+}
+
 .spinner{width:32px;height:32px;border:3px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:spin .7s linear infinite;}
 @keyframes spin{to{transform:rotate(360deg);}}
 </style>
@@ -369,6 +403,7 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
     <button class="tab" onclick="switchTab('raspored')" id="tab-raspored"><span class="tab-icon">⏰</span>Raspored</button>
     <button class="tab" onclick="switchTab('mesecni')" id="tab-mesecni" style="display:none"><span class="tab-icon">📈</span>Mesečno</button>
     <button class="tab" onclick="switchTab('pacijenti')" id="tab-pacijenti"><span class="tab-icon">👤</span>Pacijenti</button>
+    <button class="tab" onclick="switchTab('zahtevi')" id="tab-zahtevi"><span class="tab-icon">📩</span>Zahtevi<span id="zahteviBadge" style="display:none;background:var(--err);color:white;font-size:9px;font-weight:700;padding:1px 5px;border-radius:10px;margin-left:3px;vertical-align:middle;"></span></button>
   </div>
 
   <div class="content" id="content"></div>
@@ -469,6 +504,7 @@ let unsubscribe = null;
 
 // Helper: da li je trenutni korisnik admin
 const isAdmin = () => currentTer === 'Administrator' || currentTer === 'Demo';
+let zahtevi = {}; // zahtevi sa sajta
 
 // ── SETUP / FIREBASE CONNECT ───────────────────────────────────
 window.connectFirebase = () => {
@@ -546,8 +582,87 @@ function startApp() {
   document.getElementById('tab-mesecni').style.display = isAdm ? 'flex' : 'none';
 
   initTermini();
-  if (!modeDemo && db) listenFirebase();
+  if (!modeDemo && db) { listenFirebase(); listenZahtevi(); }
   else { setSyncStatus('offline'); render(); }
+}
+
+
+// ── ZAHTEVI LISTENER ───────────────────────────────────────────
+function listenZahtevi() {
+  const zahRef = ref(db, 'zahtevi');
+  onValue(zahRef, (snap) => {
+    zahtevi = snap.val() || {};
+    // Broji nepotvrdene
+    const cekaju = Object.values(zahtevi).filter(z => z && z.status === 'ceka').length;
+    const badge = document.getElementById('zahteviBadge');
+    if (badge) {
+      badge.textContent = cekaju;
+      badge.style.display = cekaju > 0 ? 'inline' : 'none';
+    }
+    if (aktivnaTab === 'zahtevi') render();
+  });
+}
+
+async function potvrdiZahtev(key) {
+  const z = zahtevi[key];
+  if (!z) return;
+  try {
+    await set(ref(db, 'zahtevi/' + key), {
+      ...z,
+      status: 'potvrdjen',
+      potvrdioCas: new Date().toISOString(),
+      potvrdioTerapeut: currentTer
+    });
+    // Posalji email obaveštenje
+    await posaljiEmailPotvrdu(z);
+    showToast('✓ Zahtev potvrđen — email poslat roditelju');
+    render();
+  } catch(e) { showToast('⚠️ Greška pri potvrdi'); }
+}
+
+async function odbaciZahtev(key) {
+  if (!confirm('Odbiti ovaj zahtev?')) return;
+  const z = zahtevi[key];
+  try {
+    await set(ref(db, 'zahtevi/' + key), { ...z, status: 'odbijen', odbioTerapeut: currentTer });
+    showToast('Zahtev odbijen');
+    render();
+  } catch(e) { showToast('⚠️ Greška'); }
+}
+
+async function posaljiEmailPotvrdu(z) {
+  // EmailJS servis - besplatan do 200 emailova/mesec
+  // Konfiguracija: https://www.emailjs.com
+  // VAŽNO: Zamenite EMAILJS_SERVICE_ID, EMAILJS_TEMPLATE_ID, EMAILJS_PUBLIC_KEY
+  // sa vašim podacima nakon registracije na emailjs.com
+  const EMAILJS_SERVICE  = 'YOUR_SERVICE_ID';   // <- zameniti
+  const EMAILJS_TEMPLATE = 'YOUR_TEMPLATE_ID';  // <- zameniti
+  const EMAILJS_KEY      = 'YOUR_PUBLIC_KEY';   // <- zameniti
+
+  if (EMAILJS_SERVICE === 'YOUR_SERVICE_ID') {
+    console.log('EmailJS nije konfigurisan — email nije poslat');
+    return; // Ne blokira potvrdu
+  }
+
+  try {
+    await fetch('https://api.emailjs.com/api/v1.0/email/send', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        service_id: EMAILJS_SERVICE,
+        template_id: EMAILJS_TEMPLATE,
+        user_id: EMAILJS_KEY,
+        template_params: {
+          to_name: z.ime || 'Roditelju',
+          to_email: z.email || '',
+          telefon: z.telefon || '',
+          tip_usluge: z.tipUsluge || '',
+          poruka: 'Vaš zahtev za termin u ordinaciji Logoped i JA je potvrđen. Kontaktiraćemo vas uskoro radi dogovora oko tačnog termina.',
+          ordinacija_telefon: '063/185-9775',
+        }
+      })
+    });
+  } catch(e) { console.log('Email greška:', e); }
 }
 
 // ── FIREBASE LISTENER ──────────────────────────────────────────
@@ -662,6 +777,7 @@ function render() {
   else if (aktivnaTab==='raspored') c.innerHTML = rRaspored();
   else if (aktivnaTab==='mesecni') c.innerHTML = rMesecni();
   else if (aktivnaTab==='pacijenti') c.innerHTML = rPacijenti();
+  else if (aktivnaTab==='zahtevi') c.innerHTML = rZahtevi();
 }
 
 // ── DNEVNI ─────────────────────────────────────────────────────
@@ -881,8 +997,80 @@ function rPacijenti() {
   return h+'</div>';
 }
 
+
+// ── ZAHTEVI RENDER ─────────────────────────────────────────────
+function rZahtevi() {
+  const lista = Object.entries(zahtevi)
+    .filter(([,z]) => z)
+    .sort((a,b) => (b[1].ts||0) - (a[1].ts||0));
+
+  const cekaju = lista.filter(([,z]) => z.status === 'ceka');
+  const ostali = lista.filter(([,z]) => z.status !== 'ceka');
+
+  const fmtTs = (ts) => {
+    if (!ts) return '';
+    const d = new Date(ts);
+    return `${d.getDate()}.${d.getMonth()+1}. u ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}h`;
+  };
+
+  const kartica = ([key, z]) => {
+    const isPotv = z.status === 'potvrdjen';
+    const isOdb  = z.status === 'odbijen';
+    return `<div class="zah-card ${isPotv?'potvrdjeno':isOdb?'odbijeno':''}">
+      <div class="zah-top">
+        <div class="zah-ime">${esc(z.ime||'Nepoznat')}
+          ${isPotv ? '<span class="badge b-ok" style="font-size:10px;margin-left:6px">✓ Potvrđeno</span>' : ''}
+          ${isOdb  ? '<span class="badge b-err" style="font-size:10px;margin-left:6px">✕ Odbijeno</span>' : ''}
+          ${(!isPotv&&!isOdb) ? '<span class="badge b-warn" style="font-size:10px;margin-left:6px">⏳ Čeka</span>' : ''}
+        </div>
+        <div class="zah-meta">
+          <span class="badge b-ter">📞 ${esc(z.telefon||'/')}</span>
+          ${z.email ? `<span class="badge b-ter">✉️ ${esc(z.email)}</span>` : ''}
+          ${z.tipUsluge ? `<span class="badge b-info">${esc(z.tipUsluge)}</span>` : ''}
+          ${z.uzrast ? `<span class="badge b-ter">${esc(z.uzrast)}</span>` : ''}
+        </div>
+        ${z.razlog ? `<div class="zah-row">📋 ${esc(z.razlog)}</div>` : ''}
+        ${z.poruka ? `<div class="zah-row">💬 ${esc(z.poruka)}</div>` : ''}
+        <div class="zah-ts">Stiglo: ${fmtTs(z.ts)} ${isPotv ? '· Potvrdio: '+esc(z.potvrdioTerapeut||'') : ''}</div>
+      </div>
+      ${isPotv ? `<div class="zah-potv-info">✅ Email potvrda poslata na ${esc(z.email||'/')}</div>` : ''}
+      ${(!isPotv && !isOdb) ? `
+      <div class="zah-actions">
+        <button class="zah-btn zah-btn-ok" onclick="potvrdiZahtev('${key}')">✓ Potvrdi + pošalji email</button>
+        <button class="zah-btn zah-btn-call" onclick="window.open('tel:${z.telefon||''}')">📞 Pozovi</button>
+        <button class="zah-btn zah-btn-err" onclick="odbaciZahtev('${key}')">✕ Odbij</button>
+      </div>` : ''}
+    </div>`;
+  };
+
+  let h = `<div style="padding:12px 10px 80px">`;
+
+  if (cekaju.length > 0) {
+    h += `<div class="sec-t">⏳ ČEKA POTVRDU (${cekaju.length})</div>`;
+    h += cekaju.map(kartica).join('');
+  }
+
+  if (ostali.length > 0) {
+    h += `<div class="sec-t" style="margin-top:16px">PRETHODNI ZAHTEVI</div>`;
+    h += ostali.map(kartica).join('');
+  }
+
+  if (lista.length === 0) {
+    h += `<div class="zah-empty">
+      <div style="font-size:48px;margin-bottom:12px">📩</div>
+      <div style="font-size:15px;font-weight:600;color:var(--text2);margin-bottom:5px">Nema zahteva</div>
+      <div style="font-size:13px">Zahtevi sa sajta pojaviće se ovde</div>
+    </div>`;
+  }
+
+  h += '</div>';
+  return h;
+}
+
 // ── FILTER / QUICK STATUS ──────────────────────────────────────
 window.setFs = v => { filterSt=v; render(); };
+window.potvrdiZahtev = potvrdiZahtev;
+window.odbaciZahtev = odbaciZahtev;
 window.qSt = (key, status) => {
   const st=STATUSI[status];
   updateCas(key,{status});
