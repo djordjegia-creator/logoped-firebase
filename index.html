@@ -367,7 +367,7 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
   <div class="tabs">
     <button class="tab active" onclick="switchTab('dnevni')" id="tab-dnevni"><span class="tab-icon">📋</span>Dnevni</button>
     <button class="tab" onclick="switchTab('raspored')" id="tab-raspored"><span class="tab-icon">⏰</span>Raspored</button>
-    <button class="tab" onclick="switchTab('mesecni')" id="tab-mesecni"><span class="tab-icon">📈</span>Mesečno</button>
+    <button class="tab" onclick="switchTab('mesecni')" id="tab-mesecni" style="display:none"><span class="tab-icon">📈</span>Mesečno</button>
     <button class="tab" onclick="switchTab('pacijenti')" id="tab-pacijenti"><span class="tab-icon">👤</span>Pacijenti</button>
   </div>
 
@@ -458,7 +458,7 @@ const STATUSI = {
 
 // ── STATE ──────────────────────────────────────────────────────
 let db = null;
-let casovi = {};          // {fbKey: casObj}
+let casovi = {};
 let aktivniDatum = new Date().toISOString().slice(0,10);
 let aktivnaTab = 'dnevni';
 let editKey = null;
@@ -466,6 +466,9 @@ let filterSt = 'svi';
 let modeDemo = false;
 let currentTer = '';
 let unsubscribe = null;
+
+// Helper: da li je trenutni korisnik admin
+const isAdmin = () => currentTer === 'Administrator' || currentTer === 'Demo';
 
 // ── SETUP / FIREBASE CONNECT ───────────────────────────────────
 window.connectFirebase = () => {
@@ -537,6 +540,11 @@ function startApp() {
   document.getElementById('terLabel').textContent = currentTer;
   document.getElementById('dp').value = aktivniDatum;
   document.getElementById('dateDisplay').textContent = fmtD(aktivniDatum);
+
+  // Mesečni tab — samo za Administratora
+  const isAdm = currentTer === 'Administrator' || currentTer === 'Demo';
+  document.getElementById('tab-mesecni').style.display = isAdm ? 'flex' : 'none';
+
   initTermini();
   if (!modeDemo && db) listenFirebase();
   else { setSyncStatus('offline'); render(); }
@@ -635,6 +643,11 @@ function initTermini() {
 
 // ── TABS ───────────────────────────────────────────────────────
 window.switchTab = tab => {
+  // Zabrani non-admin pristup mesečnom tabu
+  if (tab === 'mesecni' && !isAdmin()) {
+    showToast('⛔ Pristup zabranjen');
+    return;
+  }
   aktivnaTab = tab;
   document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
   document.getElementById(`tab-${tab}`).classList.add('active');
@@ -658,12 +671,17 @@ function rDnevni() {
   let fil = filterSt==='svi' ? dan : dan.filter(c=>c.status===filterSt);
 
   const prihodDan = odr.reduce((s,c)=>s+getCena(c.tip),0);
+  const ord1 = dan.filter(c=>c.sala==='Ordinacija 1').length;
+  const ord2 = dan.filter(c=>c.sala==='Ordinacija 2').length;
 
   let h = `
   <div class="stat-grid">
     <div class="stat-item"><div class="s-label">Ukupno danas</div><div class="s-val c-info">${dan.length}</div><div class="s-sub">zakazano</div></div>
     <div class="stat-item"><div class="s-label">✓ Održano</div><div class="s-val c-ok">${odr.length}</div><div class="s-sub">od ${dan.length}</div></div>
-    <div class="stat-item"><div class="s-label">💰 Prihod</div><div class="s-val c-accent">${prihodDan.toLocaleString()}</div><div class="s-sub">RSD</div></div>
+    ${isAdmin()
+      ? `<div class="stat-item"><div class="s-label">💰 Prihod</div><div class="s-val c-accent">${prihodDan.toLocaleString()}</div><div class="s-sub">RSD</div></div>`
+      : `<div class="stat-item"><div class="s-label">🔵 Ord. 1 / 🟠 Ord. 2</div><div class="s-val c-log1">${ord1}<span style="font-size:16px;color:var(--muted)"> / </span><span style="color:var(--warn)">${ord2}</span></div><div class="s-sub">časova po ordinaciji</div></div>`
+    }
     <div class="stat-item"><div class="s-label">⚡ Paralelni</div><div class="s-val c-warn">${getPar(dan)}</div><div class="s-sub">termina</div></div>
   </div>
   <div class="fbar">
